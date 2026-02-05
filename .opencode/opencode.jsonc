@@ -3,9 +3,83 @@
   // "enterprise": {
   //   "url": "https://enterprise.dev.opencode.ai",
   // },
+  // OpenCode 기본 무료 프로바이더 비활성화
+  "disabled_providers": ["opencode"],
   "provider": {
-    "opencode": {
-      "options": {},
+    "naver-aac": {
+      "name": "Naver AAC",
+      "api": "https://aac-api.navercorp.com/v1",
+      "env": ["NAVER_AAC_API_KEY"],
+      "npm": "@ai-sdk/openai-compatible",
+      "models": {
+        "gpt-5.1-codex-max": {
+          "name": "GPT-5.1 Codex Max",
+          "tool_call": true,
+          "temperature": true,
+          "reasoning": true,
+          "attachment": true,
+          "limit": {
+            "context": 200000,
+            "output": 32768
+          },
+          "cost": {
+            "input": 0.01,
+            "output": 0.03
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          }
+        },
+        "claude-opus-4-5": {
+          "id": "global.anthropic.claude-opus-4-5-20251101-v1:0",
+          "name": "Claude Opus 4.5 (via AAC)",
+          "tool_call": true,
+          "temperature": true,
+          "reasoning": true,
+          "attachment": true,
+          "limit": {
+            "context": 200000,
+            "output": 32768
+          },
+          "cost": {
+            "input": 0.015,
+            "output": 0.075
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          }
+        }
+      }
+    },
+    "aurora-vllm": {
+      "name": "Aurora vLLM",
+      "api": "https://aurora-chat.snow.me/v1",
+      "env": ["AURORA_API_KEY"],
+      "npm": "@ai-sdk/openai-compatible",
+      "models": {
+        "qwen3-coder-30b": {
+          "id": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+          "name": "Qwen3 Coder 30B",
+          "tool_call": true,
+          "temperature": true,
+          "reasoning": false,
+          "attachment": false,
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          },
+          "cost": {
+            "input": 0,
+            "output": 0
+          },
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          }
+        }
+      }
     },
   },
   "mcp": {},
