@@ -222,12 +222,27 @@ async function handleMessage(text: string, channel: string, thread: string, user
 app.message(async ({ message, say }) => {
   try {
     if (message.subtype || !("text" in message) || !message.text) return
-    if ((message as any).channel_type !== "im") return
 
     const channel = message.channel
     const thread = (message as any).thread_ts || message.ts
     const userId = (message as any).user
-    await handleMessage(message.text, channel, thread, userId, say)
+
+    // DM은 항상 처리
+    if ((message as any).channel_type === "im") {
+      await handleMessage(message.text, channel, thread, userId, say)
+      return
+    }
+
+    // 채널: 스레드 답글이고, 해당 스레드에 이미 세션이 있으면 처리 (멘션 없이도)
+    if ((message as any).thread_ts) {
+      const sessionKey = `${channel}-${(message as any).thread_ts}`
+      if (sessions.has(sessionKey)) {
+        const text = message.text.replace(/<@[A-Z0-9]+>/g, "").trim()
+        if (!text) return
+        await handleMessage(text, channel, (message as any).thread_ts, userId, say)
+        return
+      }
+    }
   } catch (err) {
     log.error("Error processing message:", err)
     try {
