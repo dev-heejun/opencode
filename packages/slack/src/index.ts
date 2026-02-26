@@ -55,6 +55,7 @@ log.info("Bot user ID:", botUserId)
 const sessions = new Map<string, { sessionId: string; channel: string; thread: string }>()
 const sentMessages = new Set<string>()
 const userNames = new Map<string, string>()
+const processedEvents = new Set<string>()
 
 async function getUserName(userId: string): Promise<string> {
   const cached = userNames.get(userId)
@@ -177,9 +178,7 @@ async function handleToolUpdate(part: ToolPart, channel: string, thread: string)
 }
 
 async function handleMessage(text: string, channel: string, thread: string, userId: string, say: (opts: any) => Promise<void>) {
-  log.info("Processing message:", text.substring(0, 50))
-
-  const name = await getUserName(userId)
+   const name = await getUserName(userId)
   const fullText = `[${name}] ${text}`
 
   const sessionKey = `${channel}-${thread}`
@@ -225,64 +224,78 @@ async function handleMessage(text: string, channel: string, thread: string, user
 }
 
 app.message(async ({ message, say }) => {
-  try {
-    if (message.subtype || !("text" in message) || !message.text) return
-    // 봇 멘션이 포함된 메시지는 app_mention 핸들러가 처리하므로 스킵
-    if (botUserId && message.text.includes(`<@${botUserId}>`)) return
+   try {
+     if (message.subtype || !("text" in message) || !message.text) return
+     
+     const msgTs = (message as any).ts
+     if (processedEvents.has(msgTs)) return
+     processedEvents.add(msgTs)
+     
+     log.debug("Raw message text:", message.text.substring(0, 100), "| botUserId:", botUserId)
+     
+     // 봇 멘션이 포함된 메시지는 app_mention 핸들러가 처리하므로 스킵
+     if (botUserId && message.text.includes(`<@${botUserId}>`)) {
+       log.debug("Skipping bot mention in app.message")
+       return
+     }
 
-    const channel = message.channel
-    const thread = (message as any).thread_ts || message.ts
-    const userId = (message as any).user
+     const channel = message.channel
+     const thread = (message as any).thread_ts || message.ts
+     const userId = (message as any).user
 
-    // DM은 항상 처리
-    if ((message as any).channel_type === "im") {
-      await handleMessage(message.text, channel, thread, userId, say)
-      return
-    }
+     // DM은 항상 처리
+     if ((message as any).channel_type === "im") {
+       await handleMessage(message.text, channel, thread, userId, say)
+       return
+     }
 
-    // 채널: 스레드 답글이고, 해당 스레드에 이미 세션이 있으면 처리 (멘션 없이도)
-    if ((message as any).thread_ts) {
-      const sessionKey = `${channel}-${(message as any).thread_ts}`
-      if (sessions.has(sessionKey)) {
-        const text = message.text.replace(/<@[A-Z0-9]+>/g, "").trim()
-        if (!text) return
-        await handleMessage(text, channel, (message as any).thread_ts, userId, say)
-        return
-      }
-    }
-  } catch (err) {
-    log.error("Error processing message:", err)
-    try {
-      await say({
-        text: "오류가 발생했습니다.",
-        thread_ts: (message as any).thread_ts || (message as any).ts,
-      })
-    } catch {}
-  }
-})
+     // 채널: 스레드 답글이고, 해당 스레드에 이미 세션이 있으면 처리 (멘션 없이도)
+     if ((message as any).thread_ts) {
+       const sessionKey = `${channel}-${(message as any).thread_ts}`
+       if (sessions.has(sessionKey)) {
+         const text = message.text.replace(/<@[A-Z0-9]+>/g, "").trim()
+         if (!text) return
+         await handleMessage(text, channel, (message as any).thread_ts, userId, say)
+         return
+       }
+     }
+   } catch (err) {
+     log.error("Error processing message:", err)
+     try {
+       await say({
+         text: "오류가 발생했습니다.",
+         thread_ts: (message as any).thread_ts || (message as any).ts,
+       })
+     } catch {}
+   }
+ })
 
 app.event("app_mention", async ({ event, say }) => {
-  try {
-    const text = (event as any).text || ""
-    const cleanText = text.replace(/<@[A-Z0-9]+>/g, "").trim()
-    if (!cleanText) return
+   try {
+     const eventTs = event.ts
+     if (processedEvents.has(eventTs)) return
+     processedEvents.add(eventTs)
+     
+     const text = (event as any).text || ""
+     const cleanText = text.replace(/<@[A-Z0-9]+>/g, "").trim()
+     if (!cleanText) return
 
-    log.info("Processing mention:", cleanText.substring(0, 50))
+     log.info("Processing mention:", cleanText.substring(0, 50))
 
-    const channel = event.channel
-    const thread = (event as any).thread_ts || event.ts
-    const userId = event.user
-    await handleMessage(cleanText, channel, thread, userId, say)
-  } catch (err) {
-    log.error("Error processing mention:", err)
-    try {
-      await say({
-        text: "오류가 발생했습니다.",
-        thread_ts: (event as any).thread_ts || (event as any).ts,
-      })
-    } catch {}
-  }
-})
+     const channel = event.channel
+     const thread = (event as any).thread_ts || event.ts
+     const userId = event.user
+     await handleMessage(cleanText, channel, thread, userId, say)
+   } catch (err) {
+     log.error("Error processing mention:", err)
+     try {
+       await say({
+         text: "오류가 발생했습니다.",
+         thread_ts: (event as any).thread_ts || (event as any).ts,
+       })
+     } catch {}
+   }
+ })
 
 await app.start()
 log.info("Slack bot is running!")
