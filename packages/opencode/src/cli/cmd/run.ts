@@ -283,10 +283,13 @@ export const RunCommand = cmd({
         default: false,
       })
   },
-  handler: async (args) => {
-    let message = [...args.message, ...(args["--"] || [])]
-      .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
-      .join(" ")
+   handler: async (args) => {
+     // CLI 모드임을 환경 변수로 표시 (RAG 플러그인이 인덱싱 프롬프트를 건너뛰도록)
+     process.env.OPENCODE_CLI_MODE = "1"
+
+     let message = [...args.message, ...(args["--"] || [])]
+       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
+       .join(" ")
 
     const files: { type: "file"; url: string; filename: string; mime: string }[] = []
     if (args.file) {
