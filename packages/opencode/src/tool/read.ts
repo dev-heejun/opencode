@@ -39,19 +39,32 @@ export const ReadTool = Tool.define("read", {
       metadata: {},
     })
 
+    // Check if path is a directory before treating as file
+    if (fs.existsSync(filepath) && fs.statSync(filepath).isDirectory()) {
+      throw new Error(
+        `Cannot read a directory: ${filepath}\n\nThe read tool only works with files. Use the list tool to view directory contents, or glob to find files by pattern.`,
+      )
+    }
+
     const file = Bun.file(filepath)
     if (!(await file.exists())) {
       const dir = path.dirname(filepath)
       const base = path.basename(filepath)
 
-      const dirEntries = fs.readdirSync(dir)
-      const suggestions = dirEntries
-        .filter(
-          (entry) =>
-            entry.toLowerCase().includes(base.toLowerCase()) || base.toLowerCase().includes(entry.toLowerCase()),
-        )
-        .map((entry) => path.join(dir, entry))
-        .slice(0, 3)
+      let suggestions: string[] = []
+      try {
+        suggestions = fs
+          .readdirSync(dir)
+          .filter(
+            (entry) =>
+              !fs.statSync(path.join(dir, entry)).isDirectory() &&
+              (entry.toLowerCase().includes(base.toLowerCase()) || base.toLowerCase().includes(entry.toLowerCase())),
+          )
+          .map((entry) => path.join(dir, entry))
+          .slice(0, 3)
+      } catch {
+        // parent directory doesn't exist
+      }
 
       if (suggestions.length > 0) {
         throw new Error(`File not found: ${filepath}\n\nDid you mean one of these?\n${suggestions.join("\n")}`)
