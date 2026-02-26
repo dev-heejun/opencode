@@ -50,6 +50,20 @@ log.info("Opencode server ready, URL:", opencode.server.url)
 
 const sessions = new Map<string, { sessionId: string; channel: string; thread: string }>()
 const sentMessages = new Set<string>()
+const userNames = new Map<string, string>()
+
+async function getUserName(userId: string): Promise<string> {
+  const cached = userNames.get(userId)
+  if (cached) return cached
+  try {
+    const result = await app.client.users.info({ user: userId })
+    const name = result.user?.profile?.display_name || result.user?.real_name || userId
+    userNames.set(userId, name)
+    return name
+  } catch {
+    return userId
+  }
+}
 
 process.on("uncaughtException", (err) => {
   log.error("Uncaught exception:", err)
@@ -157,8 +171,11 @@ async function handleToolUpdate(part: ToolPart, channel: string, thread: string)
   }).catch(() => {})
 }
 
-async function handleMessage(text: string, channel: string, thread: string, say: (opts: any) => Promise<void>) {
+async function handleMessage(text: string, channel: string, thread: string, userId: string, say: (opts: any) => Promise<void>) {
   log.info("Processing message:", text.substring(0, 50))
+
+  const name = await getUserName(userId)
+  const fullText = `[${name}] ${text}`
 
   const sessionKey = `${channel}-${thread}`
   let session = sessions.get(sessionKey)
@@ -189,7 +206,7 @@ async function handleMessage(text: string, channel: string, thread: string, say:
     body: JSON.stringify({
       agent: OPENCODE_AGENT,
       model: modelConfig,
-      parts: [{ type: "text", text }]
+      parts: [{ type: "text", text: fullText }]
     }),
   })
 
@@ -209,7 +226,8 @@ app.message(async ({ message, say }) => {
 
     const channel = message.channel
     const thread = (message as any).thread_ts || message.ts
-    await handleMessage(message.text, channel, thread, say)
+    const userId = (message as any).user
+    await handleMessage(message.text, channel, thread, userId, say)
   } catch (err) {
     log.error("Error processing message:", err)
     try {
@@ -231,7 +249,8 @@ app.event("app_mention", async ({ event, say }) => {
 
     const channel = event.channel
     const thread = (event as any).thread_ts || event.ts
-    await handleMessage(cleanText, channel, thread, say)
+    const userId = event.user
+    await handleMessage(cleanText, channel, thread, userId, say)
   } catch (err) {
     log.error("Error processing mention:", err)
     try {
