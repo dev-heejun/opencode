@@ -48,6 +48,10 @@ log.info("Starting opencode server...")
 const opencode = await createOpencode({ port: 0 })
 log.info("Opencode server ready, URL:", opencode.server.url)
 
+const authResult = await app.client.auth.test()
+const botUserId = authResult.user_id || ""
+log.info("Bot user ID:", botUserId)
+
 const sessions = new Map<string, { sessionId: string; channel: string; thread: string }>()
 const sentMessages = new Set<string>()
 const userNames = new Map<string, string>()
@@ -223,6 +227,8 @@ async function handleMessage(text: string, channel: string, thread: string, user
 app.message(async ({ message, say }) => {
   try {
     if (message.subtype || !("text" in message) || !message.text) return
+    // 봇 멘션이 포함된 메시지는 app_mention 핸들러가 처리하므로 스킵
+    if (botUserId && message.text.includes(`<@${botUserId}>`)) return
 
     const channel = message.channel
     const thread = (message as any).thread_ts || message.ts
