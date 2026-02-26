@@ -164,6 +164,7 @@ async function startEventStream() {
 
 async function handleToolUpdate(part: ToolPart, channel: string, thread: string) {
   if (part.state.status !== "completed") return
+  if (part.tool !== "task") return
   await app.client.chat.postMessage({
     channel,
     thread_ts: thread,
