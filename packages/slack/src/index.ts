@@ -39,10 +39,36 @@ const parseModel = (modelStr?: string) => {
 
 const modelConfig = parseModel(OPENCODE_MODEL)
 
+// 허용 목록 (비어있으면 전체 허용)
+const ALLOWED_CHANNELS = process.env.ALLOWED_CHANNELS
+  ? new Set(process.env.ALLOWED_CHANNELS.split(",").map(s => s.trim()).filter(Boolean))
+  : null
+const ALLOWED_USER_IDS = process.env.ALLOWED_USER_IDS
+  ? new Set(process.env.ALLOWED_USER_IDS.split(",").map(s => s.trim()).filter(Boolean))
+  : null
+
+// DM 허용 여부:
+// - ALLOWED_USER_IDS가 설정된 경우: 해당 유저만 허용
+// - ALLOWED_USER_IDS 미설정 + ALLOWED_CHANNELS 설정된 경우: DM 전체 차단 (채널 제한이 걸려있으면 DM도 차단)
+// - 둘 다 미설정: 전체 허용
+function isDMAllowed(userId: string): boolean {
+  if (ALLOWED_USER_IDS) return ALLOWED_USER_IDS.has(userId)
+  if (ALLOWED_CHANNELS) return false
+  return true
+}
+
+// 채널: 채널 허용 목록만 체크
+function isChannelAllowed(channel: string): boolean {
+  if (ALLOWED_CHANNELS && !ALLOWED_CHANNELS.has(channel)) return false
+  return true
+}
+
 log.info("Bot configuration:")
 log.info("- Agent:", OPENCODE_AGENT, "| Model:", OPENCODE_MODEL || "(default)")
 log.info("- Log level:", LOG_LEVEL)
 log.info("- Working directory:", process.cwd())
+log.info("- Allowed channels:", ALLOWED_CHANNELS ? [...ALLOWED_CHANNELS].join(", ") : "(all)")
+log.info("- Allowed users:", ALLOWED_USER_IDS ? [...ALLOWED_USER_IDS].join(", ") : "(all)")
 
 log.info("Starting opencode server...")
 const opencode = await createOpencode({ port: 0 })
@@ -168,13 +194,7 @@ async function startEventStream() {
 }
 
 async function handleToolUpdate(part: ToolPart, channel: string, thread: string) {
-  if (part.state.status !== "completed") return
-  if (part.tool !== "task") return
-  await app.client.chat.postMessage({
-    channel,
-    thread_ts: thread,
-    text: `🔧 *${part.tool}* - ${part.state.title}`,
-  }).catch(() => {})
+  // task 진행 알림 비활성화
 }
 
 async function handleMessage(text: string, channel: string, thread: string, userId: string, say: (opts: any) => Promise<void>) {
@@ -229,31 +249,47 @@ app.message(async ({ message, say }) => {
       
       const msgTs = (message as any).ts
       if (processedEvents.has(msgTs)) return
-      processedEvents.add(msgTs)
-      
-      log.debug("Raw message text:", message.text.substring(0, 100), "| botUserId:", botUserId)
 
       const channel = message.channel
       const thread = (message as any).thread_ts || message.ts
       const userId = (message as any).user
+      const isDM = (message as any).channel_type === "im"
 
-      // DM은 항상 처리 (멘션 포함 여부 무관)
-      if ((message as any).channel_type === "im") {
+      // 채널 멘션: processedEvents에 추가하지 않고 즉시 리턴 → app_mention 핸들러가 세션 생성 후 처리
+      if (!isDM && botUserId && message.text.includes(`<@${botUserId}>`)) {
+        log.debug("Skipping bot mention in app.message (channel) - app_mention will handle")
+        return
+      }
+
+      // 이 핸들러가 처리할 메시지 → 중복 방지를 위해 processedEvents에 추가
+      processedEvents.add(msgTs)
+
+      log.debug("Raw message text:", message.text.substring(0, 100), "| botUserId:", botUserId)
+
+      if (isDM) {
+        // DM: 유저 허용 목록만 체크
+        if (!isDMAllowed(userId)) {
+          log.debug("Blocked DM - user not in allowed list. user:", userId)
+          await say({ text: "해당 채널에서는 지원되지 않는 기능입니다. 담당자에게 문의해 주세요.", thread_ts: thread }).catch(() => {})
+          return
+        }
         const text = message.text.replace(/<@[A-Z0-9]+>/g, "").trim()
         if (!text) return
         await handleMessage(text, channel, thread, userId, say)
         return
       }
-      
-      // 채널: 봇 멘션이 포함된 메시지는 app_mention 핸들러가 처리하므로 스킵
-      if (botUserId && message.text.includes(`<@${botUserId}>`)) {
-        log.debug("Skipping bot mention in app.message (channel)")
+
+      // 채널: 채널 허용 목록 체크
+      if (!isChannelAllowed(channel)) {
+        log.debug("Blocked channel - not in allowed list. channel:", channel)
+        await say({ text: "해당 채널에서는 지원되지 않는 기능입니다. 담당자에게 문의해 주세요.", thread_ts: thread }).catch(() => {})
         return
       }
 
       // 채널: 스레드 답글이고, 해당 스레드에 이미 세션이 있으면 처리 (멘션 없이도)
       if ((message as any).thread_ts) {
         const sessionKey = `${channel}-${(message as any).thread_ts}`
+        log.info("Thread reply received. sessionKey:", sessionKey, "| has session:", sessions.has(sessionKey), "| known sessions:", [...sessions.keys()])
         if (sessions.has(sessionKey)) {
           const text = message.text.replace(/<@[A-Z0-9]+>/g, "").trim()
           if (!text) return
@@ -280,13 +316,30 @@ app.event("app_mention", async ({ event, say }) => {
      
      const text = (event as any).text || ""
      const cleanText = text.replace(/<@[A-Z0-9]+>/g, "").trim()
-     if (!cleanText) return
-
-     log.info("Processing mention:", cleanText.substring(0, 50))
 
      const channel = event.channel
      const thread = (event as any).thread_ts || event.ts
      const userId = event.user
+
+     // DM 멘션: 유저 허용 목록만 체크 / 채널 멘션: 채널 허용 목록 체크
+     const isDM = channel.startsWith("D")
+     if (isDM) {
+       if (!isDMAllowed(userId)) {
+         log.debug("Blocked DM mention - user not in allowed list. user:", userId)
+         await say({ text: "해당 채널에서는 지원되지 않는 기능입니다. 담당자에게 문의해 주세요.", thread_ts: thread }).catch(() => {})
+         return
+       }
+     } else {
+       if (!isChannelAllowed(channel)) {
+         log.debug("Blocked channel mention - not in allowed list. channel:", channel)
+         await say({ text: "해당 채널에서는 지원되지 않는 기능입니다. 담당자에게 문의해 주세요.", thread_ts: thread }).catch(() => {})
+         return
+       }
+     }
+
+     if (!cleanText) return
+     log.info("Processing mention:", cleanText.substring(0, 50))
+
      await handleMessage(cleanText, channel, thread, userId, say)
    } catch (err) {
      log.error("Error processing mention:", err)
